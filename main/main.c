@@ -33,8 +33,7 @@ uint8_t hk_gState = 0;
 uint8_t hk_gRequestedState = 0;
 /// @brief 0 is FALSE, 1 is TRUE
 uint8_t hk_gIsObstructed = 0;
-/// @brief 4 is not moving, 0 is moving to open, 1 is moving to close
-uint8_t movingToState = 4;
+uint8_t hk_isDisabled = 0;
 
 void init_wifi() {
   esp_err_t nvsErrCheck = nvs_flash_init();
@@ -59,8 +58,10 @@ void startWifi() {
 }
 
 void gTriggerRelay() {
+  ESP_LOGI("[DEBUG - gTriggerRelay]", "Triggering Relay");
+
   gpio_set_level(GRELAY_PIN, 1);
-  vTaskDelay(RELAY_TRIGGER_TIME / portTICK_PERIOD_MS);
+  vTaskDelay(pdMS_TO_TICKS(RELAY_TRIGGER_TIME));
   gpio_set_level(GRELAY_PIN, 0);
 }
 
@@ -94,31 +95,7 @@ uint8_t gRequestState(uint8_t state) {
     return hk_gRequestedState;
   }
 
-  if (movingToState == 0 && hk_gRequestedState == 0) {
-    return hk_gRequestedState;
-  }
-
-  if (movingToState == 1 && hk_gRequestedState == 1) {
-    return hk_gRequestedState;
-  }
-
-  if (movingToState == 4) {
-    movingToState = hk_gRequestedState;
-    gTriggerRelay();
-
-    if (movingToState == 0) {
-      // set movingToState to 4 after CLOSE_TIME using a timer
-      vTaskDelay(CLOSE_TIME / portTICK_PERIOD_MS);
-      movingToState = 4;
-    }
-  }
-
-  if (movingToState == 0 && hk_gRequestedState == 1) {
-    movingToState = 1;
-    gTriggerRelay(); // STOPS garage movement
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-    gTriggerRelay();
-  }
+  gTriggerRelay();
 
   return hk_gRequestedState;
 }
@@ -149,10 +126,6 @@ void task_queueHandler(void *pvParameter) {
 
       hk_gState = buf;
       gUpdateState(hk_gState);
-
-      if (movingToState == 0 && hk_gState == 0) {
-        movingToState = 4;
-      }
     }
   }
 }
@@ -222,11 +195,19 @@ int hk_gWrite(hap_write_data_t write_data[],
     if (!strcmp(writeUUID, HAP_CHAR_UUID_TARGET_DOOR_STATE)) {
       ESP_LOGI("[Garage Write]", "Received TARGET_DOOR_STATE");
 
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
-
       gRequestState(write->val.u);
 
       ESP_LOGI("[DEBUG - hk_gWrite]", "Reported Val: %d", (int)write->val.u);
+
+      hap_char_update_val(write->hc, &(write->val));
+      *(write->status) = HAP_STATUS_SUCCESS;
+      ret = HAP_SUCCESS;
+    } else if (!strcmp(writeUUID, HAP_CHAR_UUID_DISABLED)) {
+      ESP_LOGI("[Garage Write]", "Received DISABLED");
+
+      hk_isDisabled = write->val.b;
+
+      ESP_LOGI("[DEBUG - hk_gWrite]", "Reported Val: %d", write->val.b);
 
       hap_char_update_val(write->hc, &(write->val));
       *(write->status) = HAP_STATUS_SUCCESS;
@@ -254,44 +235,53 @@ int hk_gRead(hap_char_t *hc,
   const char *readUUID = hap_char_get_type_uuid(hc);
 
   /* Setting a default error value */
-  hap_val_t new_val;
+  hap_val_t readVal;
   if (!strcmp(readUUID, HAP_CHAR_UUID_TARGET_DOOR_STATE)) {
     ESP_LOGI("[Garage Read]", "Received TARGET_DOOR_STATE");
 
     // do something
-    new_val.u = hk_gRequestedState;
+    readVal.u = hk_gRequestedState;
 
-    ESP_LOGI("[DEBUG - hk_gRead]", "Reported Val: %d", (int)new_val.u);
+    ESP_LOGI("[DEBUG - hk_gRead]", "Reported Val: %d", (int)readVal.u);
 
-    hap_char_update_val(hc, &new_val);
+    hap_char_update_val(hc, &readVal);
     *status_code = HAP_STATUS_SUCCESS;
   } else if (!strcmp(readUUID, HAP_CHAR_UUID_CURRENT_DOOR_STATE)) {
     ESP_LOGI("[Garage Read]", "Received CURRENT_DOOR_STATE");
 
-    new_val.u = hk_gState;
+    readVal.u = hk_gState;
 
-    ESP_LOGI("[DEBUG - hk_gRead]", "Reported Val: %d", (int)new_val.u);
+    ESP_LOGI("[DEBUG - hk_gRead]", "Reported Val: %d", (int)readVal.u);
 
-    hap_char_update_val(hc, &new_val);
+    hap_char_update_val(hc, &readVal);
     *status_code = HAP_STATUS_SUCCESS;
   } else if (!strcmp(readUUID, HAP_CHAR_UUID_NAME)) {
     ESP_LOGI("[Garage Read]", "Received NAME");
 
-    new_val.s = "Garage Door";
+    readVal.s = "Garage Door";
 
-    ESP_LOGI("[DEBUG - hk_gRead]", "Reported Val: %s", new_val.s);
+    ESP_LOGI("[DEBUG - hk_gRead]", "Reported Val: %s", readVal.s);
 
-    hap_char_update_val(hc, &new_val);
+    hap_char_update_val(hc, &readVal);
     *status_code = HAP_STATUS_SUCCESS;
 
   } else if (!strcmp(readUUID, HAP_CHAR_UUID_OBSTRUCTION_DETECTED)) {
     ESP_LOGI("[Garage Read]", "Received OBSTRUCTION_DETECTED");
 
-    new_val.b = hk_gIsObstructed;
+    readVal.b = hk_gIsObstructed;
 
-    ESP_LOGI("[DEBUG - hk_gRead]", "Reported Val: %d", new_val.b);
+    ESP_LOGI("[DEBUG - hk_gRead]", "Reported Val: %d", readVal.b);
 
-    hap_char_update_val(hc, &new_val);
+    hap_char_update_val(hc, &readVal);
+    *status_code = HAP_STATUS_SUCCESS;
+  } else if (!strcmp(readUUID, HAP_CHAR_UUID_DISABLED)) {
+    ESP_LOGI("[Garage Read]", "Received DISABLED");
+
+    readVal.b = hk_isDisabled;
+
+    ESP_LOGI("[DEBUG - hk_gRead]", "Reported Val: %d", readVal.b);
+
+    hap_char_update_val(hc, &readVal);
     *status_code = HAP_STATUS_SUCCESS;
   } else {
     ESP_LOGW("[DEBUG - hk_gRead]", "UNHANDLED UUID: %s", readUUID);
@@ -352,6 +342,12 @@ void task_main(void *pvParameters) {
   }
 
   hap_gService = service;
+
+  // hap_char_t *char_disabled =
+  //   hap_char_bool_create(HAP_CHAR_UUID_DISABLED,
+  //                        HAP_CHAR_PERM_PR | HAP_CHAR_PERM_PW |
+  //                        HAP_CHAR_PERM_EV, hk_isDisabled);
+  // hap_serv_add_char(service, char_disabled);
 
   hap_serv_set_write_cb(service, hk_gWrite);
   hap_serv_set_read_cb(service, hk_gRead);
