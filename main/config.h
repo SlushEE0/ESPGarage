@@ -1,0 +1,10 @@
+#define OTA_UPGRADE_URL "https://firmware.bin"
+
+// SYNTAX: (GPIO_NUM, GPIO_MODE)[]
+#define GPIO_TO_INIT {GPIO_NUM_22, GPIO_MODE_INPUT}
+
+#define GSENSOR_PIN GPIO_NUM_22
+#define GRELAY_PIN GPIO_NUM_23
+
+#define RELAY_TRIGGER_TIME 1000
+#define CLOSE_TIME 5000
