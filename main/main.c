@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
+#include <esp_https_ota.h>
+#include <esp_http_client.h>
 #include <app_wifi.h>
 
 #include <hap.h>
@@ -21,7 +23,9 @@
 
 #include "config.h"
 
-// just
+extern const uint8_t server_cert_pem_start[] asm("_binary_ca_cert_pem_start");
+extern const uint8_t server_cert_pem_end[] asm("_binary_ca_cert_pem_end");
+
 void hk_updateHapChar(char *uuid, hap_val_t *val);
 
 static QueueHandle_t queue_garageSensor = NULL;
@@ -298,14 +302,35 @@ int hk_gRead(hap_char_t *hc,
   return HAP_SUCCESS;
 }
 
-void updateFw() {
-  hap_char_t *char_fw =
-    hap_serv_get_char_by_uuid(hap_gService, HAP_CHAR_CUSTOM_UUID_FW_UPG_URL);
-  hap_val_t upg_val;
+void task_ota() {
+  esp_http_client_config_t cfg_httpClient = {
+    .url = FIRMWARE_UPG_URL,
+    .keep_alive_enable = true,
+    .auth_type = HTTP_AUTH_TYPE_NONE,
+    .cert_pem = (char *)server_cert_pem_start,
+  };
+  esp_https_ota_config_t cfg_ota = {
+    .http_config = &cfg_httpClient,
+  };
 
-  upg_val.s = FIRMWARE_UPG_URL;
+  ESP_LOGI("[OTA]", "Starting OTA Task");
 
-  hap_char_update_val(char_fw, &upg_val);
+  while (1) {
+    vTaskDelay(60000 / portTICK_PERIOD_MS);
+
+    ESP_LOGI("[OTA]", "Checking for firmware upgrade");
+
+    esp_err_t ret = esp_https_ota(&cfg_ota);
+    if (ret == ESP_OK) {
+      ESP_LOGI("[OTA]", "Firmware upgrade found");
+      ESP_LOGI("[OTA]", "CURRENT FW REV: %s", FW_REV);
+
+      ESP_LOGI("[OTA]", "OTA Succeed, Rebooting...");
+      esp_restart();
+    } else {
+      ESP_LOGE("[OTA]", "No firmware upgrade found");
+    }
+  }
 };
 
 void task_main(void *pvParameters) {
@@ -319,7 +344,7 @@ void task_main(void *pvParameters) {
     .manufacturer = "SKW",
     .model = "ESP32C6",
     .serial_num = "0000001",
-    .fw_rev = "0.0.1",
+    .fw_rev = FW_REV,
     .hw_rev = "1.0",
     .pv = "1.1",
     .identify_routine = hk_identify,
@@ -362,19 +387,6 @@ void task_main(void *pvParameters) {
   hap_serv_set_write_cb(service, hk_gWrite);
   hap_serv_set_read_cb(service, hk_gRead);
   hap_acc_add_serv(accessory, service);
-
-  static char server_cert[] = {};
-  hap_fw_upgrade_config_t ota_config = {
-    .server_cert_pem = server_cert,
-  };
-
-  service = hap_serv_fw_upgrade_create(&ota_config);
-  if (!service) {
-    ESP_LOGE("[tHAP]", "Failed to create Firmware Upgrade Service");
-    goto ERROR_INIT_GARAGEHAP;
-  }
-
-  hap_acc_add_serv(accessory, service);
   hap_add_accessory(accessory);
 
   init_gpio();
@@ -398,4 +410,7 @@ ERROR_INIT_GARAGEHAP:
 
 void app_main(void) {
   xTaskCreate(task_main, "task_main", 4096, NULL, 10, NULL);
+  xTaskCreate(task_ota, "task_ota", 9000, NULL, tskIDLE_PRIORITY + 2, NULL);
+
+  ESP_LOGW("[DEBUG - app_main]", "FW REV: %s", FW_REV);
 }

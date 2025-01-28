@@ -1,4 +1,5 @@
-#define FIRMWARE_UPG_URL "http://192.168.4.44/firmware.bin"
+#define FIRMWARE_UPG_URL "http://192.168.4.44/upgrade"
+#define FW_REV "1.0.0"
 
 // SYNTAX: (GPIO_NUM, GPIO_MODE)[]
 #define GPIO_TO_INIT \

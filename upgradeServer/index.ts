@@ -13,10 +13,17 @@ if (!(await upgradeFile.exists())) {
       const url = new URL(req.url);
 
       if (url.pathname === "/upgrade") {
+        console.log(req.headers.toJSON());
+        console.log(server.requestIP(req));
+
+        setTimeout(() => {throw new Error("Firmware Upgrade Finished, ending program")}, 25000);
+        
         return new Response(upgradeFile);
       }
       if (url.pathname === "/probe") return new Response("Server is up!");
-      return new Response("404!");
+      return new Response("404", {
+        status: 404
+      });
     }
   });
 
