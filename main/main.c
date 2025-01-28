@@ -298,6 +298,16 @@ int hk_gRead(hap_char_t *hc,
   return HAP_SUCCESS;
 }
 
+void updateFw() {
+  hap_char_t *char_fw =
+    hap_serv_get_char_by_uuid(hap_gService, HAP_CHAR_CUSTOM_UUID_FW_UPG_URL);
+  hap_val_t upg_val;
+
+  upg_val.s = FIRMWARE_UPG_URL;
+
+  hap_char_update_val(char_fw, &upg_val);
+};
+
 void task_main(void *pvParameters) {
   hap_acc_t *accessory;
   hap_serv_t *service;
@@ -353,12 +363,23 @@ void task_main(void *pvParameters) {
   hap_serv_set_read_cb(service, hk_gRead);
   hap_acc_add_serv(accessory, service);
 
+  static char server_cert[] = {};
+  hap_fw_upgrade_config_t ota_config = {
+    .server_cert_pem = server_cert,
+  };
+
+  service = hap_serv_fw_upgrade_create(&ota_config);
+  if (!service) {
+    ESP_LOGE("[tHAP]", "Failed to create Firmware Upgrade Service");
+    goto ERROR_INIT_GARAGEHAP;
+  }
+
+  hap_acc_add_serv(accessory, service);
   hap_add_accessory(accessory);
 
   init_gpio();
 
   hap_set_setup_code("111-22-333\0");
-  /* Unique four character Setup Id. Default: ES32 */
   hap_set_setup_id("SKWG\0");
   app_hap_setup_payload("111-22-333\0", "SKWG\0", false, cfg_hap.cid);
 

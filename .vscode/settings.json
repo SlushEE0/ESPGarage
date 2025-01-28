@@ -8,5 +8,6 @@
     "hap.h": "c",
     "functional": "c",
     "app_hap_setup_payload.h": "c"
-  }
+  },
+  "prettier.enable": true
 }
